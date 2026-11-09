@@ -32,9 +32,11 @@ LINK_SELECTOR = "#main-grid .grid_item a[href]"
 NEXT_SELECTOR = ".paginator a.next[href]"
 MAX_PAGES = 50
 
-IMG_SELECTOR = "#recipe-card .card-image img"
-TITLE_SELECTOR = "#recipe-card .card-title"
-DESC_SELECTOR = "#recipe-card .desc p"
+IMG_SELECTOR = "#model-card .card-image img"
+TITLE_SELECTOR = "#model-card .card-title"
+DESC_SELECTOR = "#model-card .desc p"
+
+OUT_DIR = "images"
 
 OUT_DIR = "images"
 XLSX_FILE = "recipes.xlsx"
