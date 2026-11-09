@@ -24,27 +24,52 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Python packages
-        run: pip install requests beautifulsoup4 openpyxl playwright nest_asyncio
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-scraper-v1
 
-      - name: Install Chromium for the browser fallback
-        run: playwright install --with-deps chromium
+      - name: Cache Playwright Chromium
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-v1
 
-      - name: Install rclone
-        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+      - name: Install tools (in parallel)
+        run: |
+          # rclone installs in the background while pip runs
+          (curl -fsSL https://rclone.org/install.sh | sudo bash > /tmp/rclone-install.log 2>&1) &
+          RCLONE_PID=$!
+
+          pip install requests beautifulsoup4 openpyxl playwright nest_asyncio
+
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            playwright install-deps chromium
+          else
+            playwright install --with-deps chromium
+          fi
+
+          wait $RCLONE_PID || { cat /tmp/rclone-install.log; exit 1; }
+
+      - name: Configure rclone for MEGA
+        run: |
+          mkdir -p ~/.config/rclone
+          printf '[mega]\ntype = mega\nuser = %s\npass = %s\n' "${{ secrets.MEGA_USER }}" "${{ secrets.MEGA_PASS }}" > ~/.config/rclone/rclone.conf
 
       - name: Run scraper
         env:
           MAIN_URL: ${{ inputs.main_url }}
           MAX_LINKS: ${{ inputs.max_links }}
-          MEGA_USER: ${{ secrets.MEGA_USER }}
-          MEGA_PASS: ${{ secrets.MEGA_PASS }}   # the OBSCURED password
         run: python scraper.py
 
       - name: Keep a copy of the results on GitHub too
@@ -56,3 +81,4 @@ jobs:
             recipes.xlsx
             images/
           if-no-files-found: ignore
+          compression-level: 1
