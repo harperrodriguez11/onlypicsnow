@@ -15,37 +15,38 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import unquote, urljoin, urlparse
 
-import nest_asyncio
 import requests
 from bs4 import BeautifulSoup
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-nest_asyncio.apply()
-
 # ====== SETTINGS ======
-MAIN_URL = os.environ.get("MAIN_URL") or "https://www.onlypics.com/teen/"
-MAX_LINKS = int(os.environ.get("MAX_LINKS") or 1000)
+MAIN_URL = os.environ.get("MAIN_URL") or "https://foodiesposts.com/page1/"
+MAX_LINKS = int(os.environ.get("MAX_LINKS") or 10)
 LINK_SELECTOR = "#main-grid .grid_item a[href]"
-NEXT_SELECTOR = ".paginator a.next[href]"   # "Next page" button
-MAX_PAGES = 50                              # safety limit so it can never loop forever
+NEXT_SELECTOR = ".paginator a.next[href]"
+MAX_PAGES = 50
 
-IMG_SELECTOR = "#model-card .card-image img"
-TITLE_SELECTOR = "#model-card .card-title"
-DESC_SELECTOR = "#model-card .desc p"
+IMG_SELECTOR = "#recipe-card .card-image img"
+TITLE_SELECTOR = "#recipe-card .card-title"
+DESC_SELECTOR = "#recipe-card .desc p"
 
 OUT_DIR = "images"
 XLSX_FILE = "recipes.xlsx"
 
 MEGA_REMOTE = "mega"
 MEGA_TYPE = "mega"
-MEGA_USER = os.environ.get("MEGA_USER", "tanweerahmedjw8@gmail.com")
-MEGA_PASS = os.environ.get("MEGA_PASS", "tGCuikkmr3crlky87xBplmvL02yCHSCWAVxPH5U")
+MEGA_USER = os.environ.get("MEGA_USER", "your@email.com")
+MEGA_PASS = os.environ.get("MEGA_PASS", "<OBSCURED_PASSWORD>")
 MEGA_FOLDER = "recipe_images"
-DELAY = 1.0
+DELAY = 0.3                                   # pause between pagination requests
+WORKERS = int(os.environ.get("WORKERS") or 8)  # parallel recipe pages / image downloads
+BROWSER_WORKERS = 3                            # parallel headless browsers (slow fallback)
 # ======================
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -85,7 +86,11 @@ async def _get_html_browser(url, wait_selector):
 
 def get_page_browser(url, wait_selector):
     """Returns (html, title_from_css_computed_style)."""
-    return asyncio.run(_get_html_browser(url, wait_selector))
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_get_html_browser(url, wait_selector))
+    finally:
+        loop.close()
 
 
 def get_html_browser(url, wait_selector):
@@ -159,6 +164,7 @@ def extract_links(html, base_url, limit, links=None, seen=None):
         if full not in seen:
             seen.add(full)
             links.append(full)
+            print(f"  link {len(links)}/{limit}: {full}", flush=True)
     return links
 
 
@@ -237,6 +243,7 @@ def safe_filename(name, fallback):
 
 
 _used_names = set()
+_names_lock = threading.Lock()
 
 
 def download_image(img_url, fullname, index):
@@ -247,10 +254,11 @@ def download_image(img_url, fullname, index):
         ext = ".jpg"
     filename = stem + ext
     n = 2
-    while filename.lower() in _used_names:
-        filename = f"{stem}_{n}{ext}"
-        n += 1
-    _used_names.add(filename.lower())
+    with _names_lock:
+        while filename.lower() in _used_names:
+            filename = f"{stem}_{n}{ext}"
+            n += 1
+        _used_names.add(filename.lower())
     path = os.path.join(OUT_DIR, filename)
     r = requests.get(img_url, headers=HEADERS, timeout=60)
     r.raise_for_status()
@@ -297,28 +305,65 @@ def main():
     links = collect_links(MAIN_URL, MAX_LINKS)
     print(f"Collected {len(links)} links")
 
-    # 2) scrape + download (NO uploading here)
-    rows = []
-    for i, link in enumerate(links, 1):
-        try:
-            try:
-                html = get_html_requests(link)
-                data = parse_recipe(html, link)
-                if not data["fullname"]:
-                    raise ValueError("no title found in CSS via requests")
-            except Exception:
-                html, css_title = get_page_browser(link, TITLE_SELECTOR)
-                data = parse_recipe(html, link, css_title)
+    # 2) scrape + download in PARALLEL (NO uploading here)
+    total = len(links)
 
-            if not data["img_url"]:
-                print(f"[{i}] no image on {link}")
-                continue
-            filename = download_image(data["img_url"], data["fullname"], i)
-            rows.append((filename, data["caption"], data["fullname"]))
-            print(f"[{i}/{len(links)}] {data['fullname']} -> {filename}")
+    def finish(i, link, data):
+        """Download the image and return the xlsx row (or None)."""
+        if not data["img_url"]:
+            print(f"[{i}/{total}] no image on {link}", flush=True)
+            return None
+        filename = download_image(data["img_url"], data["fullname"], i)
+        print(f"[{i}/{total}] OK: {data['fullname']} -> {filename}", flush=True)
+        return (filename, data["caption"], data["fullname"])
+
+    def fast_job(i, link):
+        """Fast path: plain HTTP. Returns ('row', row) / ('skip', None) / ('browser', None)."""
+        try:
+            data = parse_recipe(get_html_requests(link), link)
+        except Exception:
+            return "browser", None
+        if not data["fullname"]:
+            return "browser", None
+        try:
+            row = finish(i, link, data)
         except Exception as e:
-            print(f"[{i}] failed {link}: {e}")
-        time.sleep(DELAY)
+            print(f"[{i}/{total}] failed {link}: {e}", flush=True)
+            return "skip", None
+        return ("row", row) if row else ("skip", None)
+
+    def browser_job(i, link):
+        """Slow path: headless browser, only for pages the fast path could not read."""
+        try:
+            html, css_title = get_page_browser(link, TITLE_SELECTOR)
+            return finish(i, link, parse_recipe(html, link, css_title))
+        except Exception as e:
+            print(f"[{i}/{total}] failed {link}: {e}", flush=True)
+            return None
+
+    results = {}
+    need_browser = []
+    print(f"Scraping {total} pages with {WORKERS} parallel workers...", flush=True)
+    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+        futs = {ex.submit(fast_job, i, link): (i, link) for i, link in enumerate(links, 1)}
+        for f in as_completed(futs):
+            i, link = futs[f]
+            kind, row = f.result()
+            if kind == "row":
+                results[i] = row
+            elif kind == "browser":
+                need_browser.append((i, link))
+
+    if need_browser:
+        print(f"{len(need_browser)} pages need the browser ({BROWSER_WORKERS} at a time)...", flush=True)
+        with ThreadPoolExecutor(max_workers=BROWSER_WORKERS) as ex:
+            futs = {ex.submit(browser_job, i, link): i for i, link in need_browser}
+            for f in as_completed(futs):
+                row = f.result()
+                if row:
+                    results[futs[f]] = row
+
+    rows = [results[i] for i in sorted(results)]   # keep the original page order
 
     # 3) write xlsx
     wb = Workbook()
