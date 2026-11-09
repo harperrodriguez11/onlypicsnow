@@ -62,8 +62,8 @@ UPLOAD_EVERY = 5                         # upload to MEGA after every N recipes
 
 MEGA_REMOTE = "mega"                     # [mega]  (name of the remote)
 MEGA_TYPE = "mega"                       # type = mega
-MEGA_USER = "tanweerahmedjw8@gmail.com"             # user = your@email.com
-MEGA_PASS = "tGCuikkmr3crlky87xBplmvL02yCHSCWAVxPH5U"        # pass = <OBSCURED_PASSWORD>  (get it with: rclone obscure "yourpassword")
+MEGA_USER = os.environ.get("MEGA_USER", "tanweerahmedjw8@gmail.com")
+MEGA_PASS = os.environ.get("MEGA_PASS", "tGCuikkmr3crlky87xBplmvL02yCHSCWAVxPH5U")       # pass = <OBSCURED_PASSWORD>  (get it with: rclone obscure "yourpassword")
 MEGA_FOLDER = "recipe_images"   
         # folder inside MEGA
 DELAY = 1.0                     # seconds between requests (be polite)
