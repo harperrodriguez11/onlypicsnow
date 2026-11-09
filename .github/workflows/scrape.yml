@@ -1,0 +1,46 @@
+name: Scrape recipes
+
+on:
+  workflow_dispatch:        # Run manually: Actions tab -> "Scrape recipes" -> Run workflow
+  # schedule:               # Optional: uncomment to run daily
+  #   - cron: "0 3 * * *"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python packages
+        run: pip install requests beautifulsoup4 openpyxl playwright nest_asyncio
+
+      - name: Install Chromium for the browser fallback
+        run: playwright install --with-deps chromium
+
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Run scraper
+        env:
+          MEGA_USER: ${{ secrets.MEGA_USER }}
+          MEGA_PASS: ${{ secrets.MEGA_PASS }}   # the OBSCURED password
+        run: python scraper.py
+
+      - name: Keep a copy of the results on GitHub too
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recipes-output
+          path: |
+            recipes.xlsx
+            images/
+          if-no-files-found: ignore
