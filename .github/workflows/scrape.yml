@@ -37,12 +37,15 @@ jobs:
         run: playwright install --with-deps chromium
 
       - name: Install rclone
-        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          mkdir -p ~/.config/rclone && touch ~/.config/rclone/rclone.conf
 
       - name: Run scraper
         env:
           MAIN_URL: ${{ inputs.main_url }}
           MAX_LINKS: ${{ inputs.max_links }}
+          RCLONE_LOG_LEVEL: ERROR
           MEGA_USER: ${{ secrets.MEGA_USER }}
           MEGA_PASS: ${{ secrets.MEGA_PASS }}   # the OBSCURED password
         run: python scraper.py
