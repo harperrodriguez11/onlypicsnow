@@ -6,12 +6,12 @@ on:
       main_url:
         description: "Main page URL to start from"
         required: true
-        default: "https://foodiesposts.com/page1/"
+        default: "https://www.onlypics.com/teen/"
         type: string
       max_links:
         description: "Maximum number of recipe links to scrape"
         required: false
-        default: "10"
+        default: "1000"
         type: string
   # schedule:               # Optional: uncomment to run daily (uses the defaults in the script)
   #   - cron: "0 3 * * *"
