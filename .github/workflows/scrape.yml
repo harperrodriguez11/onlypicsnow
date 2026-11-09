@@ -2,7 +2,18 @@ name: Scrape recipes
 
 on:
   workflow_dispatch:        # Run manually: Actions tab -> "Scrape recipes" -> Run workflow
-  # schedule:               # Optional: uncomment to run daily
+    inputs:
+      main_url:
+        description: "Main page URL to start from"
+        required: true
+        default: "https://foodiesposts.com/page1/"
+        type: string
+      max_links:
+        description: "Maximum number of recipe links to scrape"
+        required: false
+        default: "10"
+        type: string
+  # schedule:               # Optional: uncomment to run daily (uses the defaults in the script)
   #   - cron: "0 3 * * *"
 
 jobs:
@@ -31,6 +42,8 @@ jobs:
 
       - name: Run scraper
         env:
+          MAIN_URL: ${{ inputs.main_url }}
+          MAX_LINKS: ${{ inputs.max_links }}
           MEGA_USER: ${{ secrets.MEGA_USER }}
           MEGA_PASS: ${{ secrets.MEGA_PASS }}   # the OBSCURED password
         run: python scraper.py
