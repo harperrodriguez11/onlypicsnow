@@ -41,6 +41,17 @@ jobs:
           curl -fsSL https://rclone.org/install.sh | sudo bash
           mkdir -p ~/.config/rclone && touch ~/.config/rclone/rclone.conf
 
+      - name: Test MEGA login (shows the real rclone error)
+        continue-on-error: true
+        env:
+          RCLONE_CONFIG_MEGA_TYPE: mega
+          RCLONE_CONFIG_MEGA_USER: ${{ secrets.MEGA_USER }}
+          RCLONE_CONFIG_MEGA_PASS: ${{ secrets.MEGA_PASS }}
+        run: |
+          echo "MEGA_USER secret set: $([ -n "$RCLONE_CONFIG_MEGA_USER" ] && echo yes || echo NO)"
+          echo "MEGA_PASS secret set: $([ -n "$RCLONE_CONFIG_MEGA_PASS" ] && echo yes || echo NO)"
+          rclone lsd mega: -v 2>&1 | tail -30
+
       - name: Run scraper
         env:
           MAIN_URL: ${{ inputs.main_url }}
